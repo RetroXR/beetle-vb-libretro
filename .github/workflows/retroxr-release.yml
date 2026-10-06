@@ -1,0 +1,281 @@
+# Build the retroXR Beetle VB core for Windows, Android, Linux and macOS and
+# publish it as a release, so retroXR's CoreDownloadManager can fetch it.
+#
+# This fork carries the Virtual Boy's communication port (EXT.), which the stock
+# core does not emulate at all: mednafen/vb/comm.c joins a link bus the frontend
+# hosts through RETRO_ENVIRONMENT_GET_LINK_INTERFACE (libretro/RetroArch#19454)
+# and speaks `vb-comm-1`. With no bus, or nothing cabled, the port is a Virtual
+# Boy with an empty socket, so there is no option to switch it on.
+#
+# Two fixes ride with it, because linked software needs them: HALT stops the
+# CPU at the HALT, and DPSTTS reports FCLK.
+#
+#   Windows  mednafen_vb_libretro.dll.zip          containing mednafen_vb_libretro.dll
+#   Android  mednafen_vb_libretro_android.so.zip   containing mednafen_vb_libretro_android.so
+#   Linux    mednafen_vb_libretro.so.zip           containing mednafen_vb_libretro.so
+#   macOS    mednafen_vb_libretro_arm64.dylib.zip
+#            mednafen_vb_libretro_x86_64.dylib.zip
+#              each containing mednafen_vb_libretro.dylib
+#
+# The release must NOT be a prerelease: the download URL is the /releases/latest/
+# form, and GitHub's `latest` skips prereleases.
+
+name: retroXR core release
+
+on:
+  push:
+    tags:
+      - 'retroxr-mednafen_vb-libretro-v*'
+  workflow_dispatch:
+    inputs:
+      ref:
+        description: 'Branch, tag or SHA to build'
+        required: true
+        default: 'retroxr'
+      tag:
+        description: 'Release tag to publish as (leave blank to build without publishing)'
+        required: false
+        default: ''
+
+jobs:
+  windows:
+    name: Windows x86_64 (mingw-w64)
+    runs-on: ubuntu-latest
+    steps:
+      - name: Install dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y g++-mingw-w64-x86-64 make zip
+
+      - uses: actions/checkout@v6
+        with:
+          submodules: recursive
+          ref: ${{ github.event.inputs.ref || github.ref }}
+
+      # platform=win is passed explicitly and never inferred. The makefile picks
+      # its platform from uname, so building for Windows from a Linux host would
+      # otherwise silently produce a unix target.
+      - name: Build
+        run: |
+          make platform=win \
+            CC=x86_64-w64-mingw32-gcc CXX=x86_64-w64-mingw32-g++ \
+            -j$(nproc)
+
+      - name: Package
+        run: |
+          mapfile -t hits < <(find . -maxdepth 2 -name 'mednafen_vb_libretro.dll' -type f)
+          if [ "${#hits[@]}" -ne 1 ]; then
+            echo "expected exactly one mednafen_vb_libretro.dll, found ${#hits[@]}:"
+            printf '  %s\n' "${hits[@]}"
+            exit 1
+          fi
+          mkdir -p stage
+          cp "${hits[0]}" stage/mednafen_vb_libretro.dll
+          (cd stage && zip -q -X ../mednafen_vb_libretro.dll.zip mednafen_vb_libretro.dll)
+          file stage/mednafen_vb_libretro.dll
+          ls -lh mednafen_vb_libretro.dll.zip
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: windows
+          path: mednafen_vb_libretro.dll.zip
+          if-no-files-found: error
+
+  android:
+    name: Android arm64-v8a
+    runs-on: ubuntu-latest
+    steps:
+      - name: Install dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y wget unzip zip
+          # Into RUNNER_TEMP, NOT the workspace. This step runs before
+          # actions/checkout, and checkout clears the workspace it checks into --
+          # so an NDK unpacked at $PWD here exists at the end of this step and is
+          # gone by the time the build runs. The failure is a bare
+          # "ndk-build: command not found", which says nothing about why.
+          wget -q -O "$RUNNER_TEMP/ndk.zip" https://dl.google.com/android/repository/android-ndk-r27d-linux.zip
+          unzip -q "$RUNNER_TEMP/ndk.zip" -d "$RUNNER_TEMP"
+          echo "$RUNNER_TEMP/android-ndk-r27d" >> $GITHUB_PATH
+
+      - uses: actions/checkout@v6
+        with:
+          submodules: recursive
+          ref: ${{ github.event.inputs.ref || github.ref }}
+
+      # Application.mk says APP_ABI := all; arm64-v8a is passed on the command
+      # line so the run builds the one ABI retroXR ships and not every ABI the
+      # NDK knows.
+      - name: Build
+        run: |
+          cd jni
+          ndk-build APP_ABI=arm64-v8a -j$(nproc)
+
+      # LOCAL_MODULE is `retro`, so ndk-build emits libretro.so -- a name that
+      # says nothing about which core it is. It is renamed on the way into the
+      # zip to the name the asset advertises and the installer expects.
+      - name: Package
+        run: |
+          # libs/, not obj/. ndk-build leaves an unstripped copy in
+          # obj/local/<abi>/ and INSTALLS the deliverable to libs/<abi>/, so a
+          # search for the bare name finds two and the bigger one is the wrong
+          # one. The exactly-one check below is what turned that into a failed
+          # run rather than a core shipped with its debug info attached.
+          mapfile -t hits < <(find . -path '*/libs/arm64-v8a/*' -name 'libretro.so' -type f)
+          if [ "${#hits[@]}" -ne 1 ]; then
+            echo "expected exactly one arm64-v8a libretro.so, found ${#hits[@]}:"
+            printf '  %s\n' "${hits[@]}"
+            exit 1
+          fi
+          mkdir -p stage
+          cp "${hits[0]}" stage/mednafen_vb_libretro_android.so
+          (cd stage && zip -q -X ../mednafen_vb_libretro_android.so.zip mednafen_vb_libretro_android.so)
+          file stage/mednafen_vb_libretro_android.so
+          ls -lh mednafen_vb_libretro_android.so.zip
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: android
+          path: mednafen_vb_libretro_android.so.zip
+          if-no-files-found: error
+
+  # The oldest Ubuntu runner: a shared library loads only against a glibc at
+  # least as new as the one it was linked with.
+  linux:
+    name: Linux x86_64
+    runs-on: ubuntu-22.04
+    steps:
+      - name: Install dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y make zip
+
+      - uses: actions/checkout@v6
+        with:
+          submodules: recursive
+          ref: ${{ github.event.inputs.ref || github.ref }}
+
+      - name: Build
+        run: make platform=unix -j$(nproc)
+
+      - name: Package
+        run: |
+          mapfile -t hits < <(find . -maxdepth 2 -name 'mednafen_vb_libretro.so' -type f)
+          if [ "${#hits[@]}" -ne 1 ]; then
+            echo "expected exactly one mednafen_vb_libretro.so, found ${#hits[@]}:"
+            printf '  %s\n' "${hits[@]}"
+            exit 1
+          fi
+          mkdir -p stage
+          cp "${hits[0]}" stage/mednafen_vb_libretro.so
+          (cd stage && zip -q -X ../mednafen_vb_libretro.so.zip mednafen_vb_libretro.so)
+          file stage/mednafen_vb_libretro.so
+          ls -lh mednafen_vb_libretro.so.zip
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: linux
+          path: mednafen_vb_libretro.so.zip
+          if-no-files-found: error
+
+  # Both architectures on one Apple Silicon runner, with the flags libretro's
+  # own osx-arm64 CI template passes: the osx branch of the makefile only
+  # applies a target triple and SDK when CROSS_COMPILE=1.
+  macos:
+    name: macOS ${{ matrix.arch }}
+    runs-on: macos-14
+    strategy:
+      matrix:
+        include:
+          - arch: arm64
+            triple: arm64-apple-macos10.15
+          - arch: x86_64
+            triple: x86_64-apple-macos10.13
+    steps:
+      - uses: actions/checkout@v6
+        with:
+          submodules: recursive
+          ref: ${{ github.event.inputs.ref || github.ref }}
+
+      - name: Build
+        run: |
+          make platform=osx CC=clang CXX=clang++ CROSS_COMPILE=1 \
+            LIBRETRO_APPLE_PLATFORM=${{ matrix.triple }} \
+            LIBRETRO_APPLE_ISYSROOT="$(xcrun --sdk macosx --show-sdk-path)" \
+            -j$(sysctl -n hw.ncpu)
+
+      - name: Package
+        run: |
+          # No mapfile: macOS's own /bin/bash is 3.2, which lacks it, and this
+          # step should not depend on which bash the runner puts first on PATH.
+          hits=$(find . -maxdepth 2 -name 'mednafen_vb_libretro.dylib' -type f)
+          if [ "$(printf '%s\n' "$hits" | grep -c .)" -ne 1 ]; then
+            echo "expected exactly one mednafen_vb_libretro.dylib, found:"
+            printf '  %s\n' "$hits"
+            exit 1
+          fi
+          lib="$hits"
+          lipo -info "$lib"
+          if [ "$(lipo -archs "$lib")" != "${{ matrix.arch }}" ]; then
+            echo "$lib is not ${{ matrix.arch }}"
+            exit 1
+          fi
+          mkdir -p stage
+          cp "$lib" stage/mednafen_vb_libretro.dylib
+          (cd stage && zip -q -X ../mednafen_vb_libretro_${{ matrix.arch }}.dylib.zip mednafen_vb_libretro.dylib)
+          ls -lh mednafen_vb_libretro_${{ matrix.arch }}.dylib.zip
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: macos-${{ matrix.arch }}
+          path: mednafen_vb_libretro_${{ matrix.arch }}.dylib.zip
+          if-no-files-found: error
+
+  publish:
+    name: Publish release
+    needs: [windows, android, linux, macos]
+    if: github.event_name == 'push' || github.event.inputs.tag != ''
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          path: dist
+          merge-multiple: true
+
+      - name: Publish
+        env:
+          GH_TOKEN: ${{ github.token }}
+          TAG: ${{ github.event.inputs.tag || github.ref_name }}
+        run: |
+          ls -lh dist
+          cat > notes.md <<EOF
+          Beetle VB libretro core built for retroXR, from \`$GITHUB_SHA\`.
+
+          Windows x86_64, Android arm64-v8a, Linux x86_64 and macOS arm64 and
+          x86_64. The source for these binaries is this tag.
+
+          Over the stock buildbot build this carries the Virtual Boy's
+          communication port (the EXT. socket and its link cable), spoken as
+          \`vb-comm-1\` over a link bus the frontend hosts: the clocked 8-bit
+          exchange, both interrupt sources and the COMCNT line. The stock core
+          reads all four registers as 0.
+
+          Two fixes that linked software depends on come with it. HALT now stops
+          the CPU at the HALT rather than at the next timing event, and DPSTTS
+          reports FCLK, the display frame clock.
+          EOF
+          if ! gh release view "$TAG" --repo "$GITHUB_REPOSITORY" >/dev/null 2>&1; then
+            gh release create "$TAG" \
+              --repo "$GITHUB_REPOSITORY" \
+              --title "Beetle VB (retroXR build) $TAG" \
+              --notes-file notes.md
+          fi
+          gh release upload "$TAG" \
+            dist/mednafen_vb_libretro.dll.zip \
+            dist/mednafen_vb_libretro_android.so.zip \
+            dist/mednafen_vb_libretro.so.zip \
+            dist/mednafen_vb_libretro_arm64.dylib.zip \
+            dist/mednafen_vb_libretro_x86_64.dylib.zip \
+            --repo "$GITHUB_REPOSITORY" --clobber
