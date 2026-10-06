@@ -52,6 +52,7 @@ static struct MDFN_Surface surf;
 #include "mednafen/vb/vsu.h"
 #include "mednafen/vb/vip.h"
 #include "mednafen/vb/input.h"
+#include "mednafen/vb/comm.h"
 #include "mednafen/mempatcher.h"
 #include "mednafen/hw_cpu/v810/v810_cpu.h"
 
@@ -115,7 +116,7 @@ static uint32 VSU_CycleFix;
 
 static uint8 WCR;
 
-static int32 next_vip_ts, next_timer_ts, next_input_ts;
+static int32 next_vip_ts, next_timer_ts, next_input_ts, next_comm_ts;
 
 static uint32 IRQ_Asserted;
 
@@ -155,6 +156,11 @@ static uint8 HWCTRL_Read(v810_timestamp_t &timestamp, uint32 A)
 
    switch(A & 0xFF)
    {
+      case 0x00:
+      case 0x04:
+      case 0x08:
+      case 0x0C:
+         return COMM_Read(timestamp, A);
       case 0x18:
       case 0x1C:
       case 0x20:
@@ -178,6 +184,12 @@ static void HWCTRL_Write(v810_timestamp_t &timestamp, uint32 A, uint8 V)
 
    switch(A & 0xFF)
    {
+      case 0x00:
+      case 0x04:
+      case 0x08:
+      case 0x0C:
+         COMM_Write(timestamp, A, V);
+         break;
       case 0x18:
       case 0x1C:
       case 0x20:
@@ -319,6 +331,9 @@ static void FixNonEvents(void)
 
    if(next_input_ts & 0x40000000)
       next_input_ts = VB_EVENT_NONONO;
+
+   if(next_comm_ts & 0x40000000)
+      next_comm_ts  = VB_EVENT_NONONO;
 }
 
 static void EventReset(void)
@@ -326,6 +341,7 @@ static void EventReset(void)
    next_vip_ts   = VB_EVENT_NONONO;
    next_timer_ts = VB_EVENT_NONONO;
    next_input_ts = VB_EVENT_NONONO;
+   next_comm_ts  = VB_EVENT_NONONO;
 }
 
 static INLINE int32 CalcNextTS(void)
@@ -338,6 +354,9 @@ static INLINE int32 CalcNextTS(void)
    if(next_timestamp > next_input_ts)
       next_timestamp  = next_input_ts;
 
+   if(next_timestamp > next_comm_ts)
+      next_timestamp  = next_comm_ts;
+
    return next_timestamp;
 }
 
@@ -346,10 +365,12 @@ static void RebaseTS(const v810_timestamp_t timestamp)
    assert(next_vip_ts   > timestamp);
    assert(next_timer_ts > timestamp);
    assert(next_input_ts > timestamp);
+   assert(next_comm_ts  > timestamp);
 
    next_vip_ts   -= timestamp;
    next_timer_ts -= timestamp;
    next_input_ts -= timestamp;
+   next_comm_ts  -= timestamp;
 }
 
 extern "C" void VB_SetEvent(const int type,
@@ -361,6 +382,8 @@ extern "C" void VB_SetEvent(const int type,
       next_timer_ts = next_timestamp;
    else if (type == VB_EVENT_INPUT)
       next_input_ts = next_timestamp;
+   else if (type == VB_EVENT_COMM)
+      next_comm_ts = next_timestamp;
 
    if(next_timestamp < VB_V810->GetEventNT())
       VB_V810->SetEventNT(next_timestamp);
@@ -374,6 +397,8 @@ static int32 MDFN_FASTCALL EventHandler(const v810_timestamp_t timestamp)
       next_timer_ts = TIMER_Update(timestamp);
    if (timestamp >= next_input_ts)
       next_input_ts = VBINPUT_Update(timestamp);
+   if (timestamp >= next_comm_ts)
+      next_comm_ts = COMM_Update(timestamp);
 
    return CalcNextTS();
 }
@@ -384,6 +409,7 @@ static void ForceEventUpdates(const v810_timestamp_t timestamp)
    next_vip_ts   = VIP_Update(timestamp);
    next_timer_ts = TIMER_Update(timestamp);
    next_input_ts = VBINPUT_Update(timestamp);
+   next_comm_ts  = COMM_Update(timestamp);
 
    VB_V810->SetEventNT(CalcNextTS());
 }
@@ -396,6 +422,7 @@ static void VB_Power(void)
    VSU_Power();
    TIMER_Power();
    VBINPUT_Power();
+   COMM_Power();
 
    /* VSU_Power() clears the synth's per-channel last_output tracking, but the
     * resampler buffers live out here and keep their fractional offset and
@@ -1984,6 +2011,7 @@ static void Emulate(EmulateSpecStruct *espec, int16_t *sound_buf)
    TIMER_ResetTS();
    VBINPUT_ResetTS();
    VIP_ResetTS();
+   COMM_ResetTS(v810_timestamp);
 
    RebaseTS(v810_timestamp);
 
@@ -2013,6 +2041,7 @@ extern "C" int StateAction(StateMem *sm, int load, int data_only)
    ret &= TIMER_StateAction(sm, load, data_only);
    ret &= VBINPUT_StateAction(sm, load, data_only);
    ret &= VIP_StateAction(sm, load, data_only);
+   ret &= COMM_StateAction(sm, load, data_only);
 
    // Needed to recalculate next_*_ts since we don't bother storing their deltas in save states.
    if(load)
@@ -2078,6 +2107,8 @@ void retro_init(void)
 
    if (environ_cb(RETRO_ENVIRONMENT_GET_INPUT_BITMASKS, NULL))
       libretro_supports_bitmasks = true;
+
+   COMM_Init(environ_cb);
 }
 
 void retro_reset(void)
@@ -2399,11 +2430,14 @@ bool retro_load_game(const struct retro_game_info *info)
       }
    }
 
+   COMM_Start();
+
    return true;
 }
 
 void retro_unload_game(void)
 {
+   COMM_Stop();
    MDFN_FlushGameCheats(0);
    CloseGame();
    MDFNMP_Kill();
