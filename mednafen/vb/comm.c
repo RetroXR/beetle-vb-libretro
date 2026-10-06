@@ -5,6 +5,10 @@
  * ran, so no game saw the other end of a cable. Register behaviour here is the
  * Sacred Tech Scroll's (Guy Perfect), which agrees with Red Viper's.
  *
+ * The bus is reached through RETRO_ENVIRONMENT_GET_LINK_INTERFACE, exactly as
+ * libretro/RetroArch#19454 adds it to libretro.h; this fork's libretro-common
+ * carries that block and there is no private header.
+ *
  * WHAT THE PORT IS. Two units and a clocked 8-bit exchange, the Game Boy's
  * serial port with one more wire. A unit writes the byte it will send to CDTR
  * and sets C-Start. With its own clock selected (C-Clk-Sel 0) it shifts the
@@ -46,7 +50,6 @@
 
 #include "vb.h"
 #include "comm.h"
-#include "link_interface.h"
 
 #include "../state_helpers.h"
 
@@ -729,8 +732,7 @@ void COMM_Init(retro_environment_t env)
    trace = t && *t && *t != '0';
    memset(&link_storage, 0, sizeof(link_storage));
    link_if = NULL;
-   if (env(RETRO_ENVIRONMENT_GET_LINK_INTERFACE, &link_storage) ||
-       env(RETRO_ENVIRONMENT_GET_LINK_INTERFACE_FINAL, &link_storage))
+   if (env(RETRO_ENVIRONMENT_GET_LINK_INTERFACE, &link_storage))
       link_if = &link_storage;
 }
 
