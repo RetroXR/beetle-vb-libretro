@@ -482,6 +482,12 @@ static INLINE uint16 ReadRegister(int32 timestamp, uint32 A)
          if(!(DisplayRegion & 1))	/* FIXME? (Had to do it this way for Galactic Pinball...) */
 #endif
          ret |= 1 << 6;
+         /* FCLK, the display frame clock: high from the start of a display
+          * frame until the left image has been shown, low through the right
+          * one. Software that lines two linked units' frames up (VUEngine)
+          * waits on it, and with the bit stuck low it waits for ever. */
+         if(!(DisplayRegion & 2))
+            ret |= 1 << 7;
          break;
 
          /* Note: Upper bits of BRTA, BRTB, BRTC, and REST(?) are 0 when read(on real hardware) */

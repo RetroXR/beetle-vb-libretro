@@ -919,6 +919,11 @@
 
             ADDCLOCK(1);
 	    Halted = HALT_HALT;
+	    /* Stop here, not at the next event. Left to run on, the code after a
+	     * HALT executes with nothing having woken it, and software that masks
+	     * interrupts a few instructions later (VUEngine, waiting on the link
+	     * interrupt) is then put to sleep where no interrupt can reach it. */
+	    CHECK_HALTED();
 	END_OP();
 
 	BEGIN_OP(TRAP);

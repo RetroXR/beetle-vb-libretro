@@ -25,6 +25,7 @@ SOURCES_C += \
 	$(CORE_EMU_DIR)/vsu.c \
 	$(CORE_EMU_DIR)/input.c \
 	$(CORE_EMU_DIR)/timer.c \
+	$(CORE_EMU_DIR)/comm.c \
 	$(CORE_EMU_DIR)/vip.c \
 	$(MEDNAFEN_DIR)/hw_cpu/v810/fpu-new/softfloat.c
 endif
