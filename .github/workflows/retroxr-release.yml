@@ -4,7 +4,7 @@
 # This fork carries the Virtual Boy's communication port (EXT.), which the stock
 # core does not emulate at all: mednafen/vb/comm.c joins a link bus the frontend
 # hosts through RETRO_ENVIRONMENT_GET_LINK_INTERFACE (libretro/RetroArch#19454)
-# and speaks `vb-comm-1`. With no bus, or nothing cabled, the port is a Virtual
+# and speaks `vb-comm`. With no bus, or nothing cabled, the port is a Virtual
 # Boy with an empty socket, so there is no option to switch it on.
 #
 # Two fixes ride with it, because linked software needs them: HALT stops the
@@ -258,7 +258,7 @@ jobs:
 
           Over the stock buildbot build this carries the Virtual Boy's
           communication port (the EXT. socket and its link cable), spoken as
-          \`vb-comm-1\` over a link bus the frontend hosts: the clocked 8-bit
+          \`vb-comm\` over a link bus the frontend hosts: the clocked 8-bit
           exchange, both interrupt sources and the COMCNT line. The stock core
           reads all four registers as 0.
 

@@ -2918,7 +2918,7 @@ typedef struct retro_link_port retro_link_port_t;
  *
  * @param port The core's port number. A machine with more than one socket
  * distinguishes them here.
- * @param protocol_id Names the emulated wire protocol, e.g. "gba-sio-1". Peers
+ * @param protocol_id Names the emulated wire protocol, e.g. "gba-sio". Peers
  * whose ids differ are never connected to each other.
  * @param clock_rate Ticks of this core's link timeline per second of emulated
  * time, e.g. 16777216 for a Game Boy Advance. Must not be zero.

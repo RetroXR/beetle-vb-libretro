@@ -56,7 +56,7 @@
 extern retro_log_printf_t log_cb;
 
 /* Wire name. A peer with any other id is never joined to this one. */
-#define LINK_PROTOCOL "vb-comm-1"
+#define LINK_PROTOCOL "vb-comm"
 
 /* The V810's 20 MHz, the unit every timestamp in this core counts in. */
 #define LINK_CLOCK_RATE ((uint64_t)20000000)
