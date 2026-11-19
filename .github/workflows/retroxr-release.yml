@@ -183,7 +183,7 @@ jobs:
   # applies a target triple and SDK when CROSS_COMPILE=1.
   macos:
     name: macOS ${{ matrix.arch }}
-    runs-on: macos-14
+    runs-on: macos-15
     strategy:
       matrix:
         include:
